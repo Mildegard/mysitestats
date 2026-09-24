@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 // ==================== НАСТРОЙКИ ====================
-const DOMAIN = 'ВАШ_ДОМЕН.ru';          // ← замените на свой домен (без http://)
+const DOMAIN = 'spacefantasy.ru';          // ← замените на свой домен (без http://)
 const DATA_FILE = path.join(__dirname, 'data.json');
 // ==================================================
 
