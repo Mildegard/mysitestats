@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Статистика посещаемости</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 1100px;
+      margin: 40px auto;
+      padding: 0 20px;
+      background: #f8f9fa;
+      color: #222;
+    }
+    h1 { margin-bottom: 6px; }
+    .subtitle { color: #666; margin-bottom: 28px; }
+    .periods {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 28px;
+    }
+    .periods button {
+      padding: 8px 16px;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .periods button.active {
+      background: #2563eb;
+      color: #fff;
+      border-color: #2563eb;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat {
+      background: #fff;
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+      box-shadow: 0 2px 6px rgba(0,0,0,.05);
+    }
+    .stat .value { font-size: 26px; font-weight: 700; }
+    .stat .label { color: #666; font-size: 13px; margin-top: 4px; }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.06);
+    }
+    canvas { max-height: 420px; }
+    .error { color: #b91c1c; padding: 20px; background: #fef2f2; border-radius: 8px; }
+  </style>
+</head>
+<body>
+
+<h1>Статистика посещаемости</h1>
+<p class="subtitle">Данные счётчика LiveInternet</p>
+
+<div class="periods" id="periods">
+  <button data-days="7">Неделя</button>
+  <button data-days="30" class="active">Месяц</button>
+  <button data-days="365">Год</button>
+  <button data-days="730">2 года</button>
+  <button data-days="1095">3 года</button>
+  <button data-days="99999">Всё время</button>
+</div>
+
+<div id="content">
+  <p>Загрузка...</p>
+</div>
+
+<script>
+const PERIODS = {
+  7: 'Неделя',
+  30: 'Месяц',
+  365: 'Год',
+  730: '2 года',
+  1095: '3 года',
+  99999: 'Всё время'
+};
+
+let allData = {};
+let chart = null;
+
+async function loadData() {
+  try {
+    const res = await fetch('data.json?t=' + Date.now());
+    if (!res.ok) throw new Error('Файл data.json не найден');
+    allData = await res.json();
+    render(30); // по умолчанию месяц
+  } catch (e) {
+    document.getElementById('content').innerHTML = 
+      `<div class="error">Не удалось загрузить данные.<br>${e.message}<br><br>
+       Запустите скрипт сбора (collect.js) и убедитесь, что файл data.json лежит рядом с этой страницей.</div>`;
+  }
+}
+
+function render(days) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+  const filtered = Object.values(allData)
+    .filter(row => row.date >= cutoffStr)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (filtered.length === 0) {
+    document.getElementById('content').innerHTML = '<p>Нет данных за выбранный период.</p>';
+    return;
+  }
+
+  const labels   = filtered.map(r => r.date);
+  const visitors = filtered.map(r => r.visitors);
+  const hits     = filtered.map(r => r.hits);
+
+  const last = filtered[filtered.length - 1];
+  const avgVis = Math.round(visitors.reduce((a, b) => a + b, 0) / visitors.length);
+  const avgHits = Math.round(hits.reduce((a, b) => a + b, 0) / hits.length);
+
+  document.getElementById('content').innerHTML = `
+    <div class="summary">
+      <div class="stat">
+        <div class="value">${last.visitors.toLocaleString('ru')}</div>
+        <div class="label">Посетителей сегодня</div>
+      </div>
+      <div class="stat">
+        <div class="value">${last.hits.toLocaleString('ru')}</div>
+        <div class="label">Просмотров сегодня</div>
+      </div>
+      <div class="stat">
+        <div class="value">${avgVis.toLocaleString('ru')}</div>
+        <div class="label">Среднее посетителей / день</div>
+      </div>
+      <div class="stat">
+        <div class="value">${avgHits.toLocaleString('ru')}</div>
+        <div class="label">Среднее просмотров / день</div>
+      </div>
+    </div>
+    <div class="card">
+      <canvas id="chart"></canvas>
+    </div>
+  `;
+
+  if (chart) chart.destroy();
+
+  const ctx = document.getElementById('chart').getContext('2d');
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Посетители',
+          data: visitors,
+          borderColor: '#2563eb',
+          backgroundColor: 'rgba(37, 99, 235, 0.12)',
+          tension: 0.3,
+          fill: true
+        },
+        {
+          label: 'Просмотры',
+          data: hits,
+          borderColor: '#16a34a',
+          backgroundColor: 'rgba(22, 163, 74, 0.12)',
+          tension: 0.3,
+          fill: true
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top' } },
+      scales: { y: { beginAtZero: true } }
+    }
+  });
+}
+
+// Переключение периодов
+document.getElementById('periods').addEventListener('click', (e) => {
+  if (e.target.tagName !== 'BUTTON') return;
+  document.querySelectorAll('.periods button').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  render(parseInt(e.target.dataset.days, 10));
+});
+
+loadData();
+</script>
+</body>
+</html>
