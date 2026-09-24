@@ -2,7 +2,7 @@ name: Collect LiveInternet Stats
 
 on:
   schedule:
-    - cron: '0 21 * * *'   # каждый день в 21:00 UTC
+    - cron: '0 21 * * *'
   workflow_dispatch:
 
 jobs:
@@ -16,6 +16,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -25,17 +26,14 @@ jobs:
       - name: Run collector
         run: node collect.js
 
-         - name: Commit and push data.json
+      - name: Commit and push data.json
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Подтягиваем свежие изменения с GitHub
           git pull --rebase origin main || true
-          
           git add data.json
           if git diff --staged --quiet; then
-            echo "Нет изменений в data.json — пропускаем коммит"
+            echo "Нет изменений — пропускаем"
           else
             git commit -m "Update stats $(date -u +%Y-%m-%d)"
             git push
