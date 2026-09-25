@@ -7,15 +7,21 @@ const DATA_FILE = path.join(__dirname, 'data.json');
 
 function fetchValues(domain) {
   return new Promise((resolve, reject) => {
-    https.get(
+    const req = https.get(
       'https://counter.yadro.ru/values?site=' + encodeURIComponent(domain),
       { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 15000 },
       (res) => {
+        if (res.statusCode !== 200) {
+          reject(new Error('HTTP ' + res.statusCode));
+          return;
+        }
         let data = '';
         res.on('data', c => data += c);
         res.on('end', () => resolve(data));
       }
-    ).on('error', reject);
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
   });
 }
 
@@ -29,40 +35,52 @@ function parseValues(text) {
   return result;
 }
 
-/** Дата YYYY-MM-DD по Москве */
-function moscowDate(offsetDays) {
-  const d = new Date(Date.now() + offsetDays * 86400000);
-  return d.toLocaleDateString('en-CA', { timeZone: 'Europe/Moscow' });
+/** Вчерашняя дата YYYY-MM-DD по Москве */
+function moscowYesterday() {
+  const todayMoscow = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Moscow' });
+  const [y, m, d] = todayMoscow.split('-').map(Number);
+  const utc = new Date(Date.UTC(y, m - 1, d));
+  utc.setUTCDate(utc.getUTCDate() - 1);
+  return utc.toISOString().slice(0, 10);
 }
 
 async function main() {
-  console.log('Сбор:', DOMAINS.join(', '));
+  console.log('=== Сбор LiveInternet ===');
+  console.log('Домены:', DOMAINS.join(', '));
 
   let data = {};
   if (fs.existsSync(DATA_FILE)) {
-    try { data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) {}
+    try {
+      data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    } catch (e) {
+      console.warn('data.json битый, начинаем с нуля');
+      data = {};
+    }
   }
 
-  // Старый плоский формат → spacefantasy.ru
-  const keys = Object.keys(data);
-  if (keys.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(keys[0])) {
+  // Старый плоский формат → перенос под spacefantasy.ru (один раз)
+  const topKeys = Object.keys(data);
+  if (topKeys.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(topKeys[0])) {
     console.log('Конвертация старого формата...');
     data = { 'spacefantasy.ru': data };
   }
 
-  // Берём ЗАКРЫТЫЙ день (LI_day_*) — полный вчерашний день
-  // Дата записи = вчера по Москве
-  const recordDate = moscowDate(-1);
+  const recordDate = moscowYesterday();
+  console.log('Записываем закрытый день:', recordDate);
 
   for (const domain of DOMAINS) {
-    if (!data[domain]) data[domain] = {};
+    // ВАЖНО: не затираем объект домена — только дополняем/обновляем одну дату
+    if (!data[domain] || typeof data[domain] !== 'object') {
+      data[domain] = {};
+    }
+
     try {
       const raw = await fetchValues(domain);
       const v = parseValues(raw);
 
-      // day_* = полный вчерашний день (надёжно)
-      const visitors = (v.day_vis > 0 ? v.day_vis : (v.today_vis || 0));
-      const hits     = (v.day_hit > 0 ? v.day_hit : (v.today_hit || 0));
+      // Закрытые сутки (day_*), иначе fallback на today_*
+      const visitors = (v.day_vis > 0) ? v.day_vis : (v.today_vis || 0);
+      const hits     = (v.day_hit > 0) ? v.day_hit : (v.today_hit || 0);
 
       data[domain][recordDate] = {
         date: recordDate,
@@ -70,20 +88,28 @@ async function main() {
         hits,
         updated: new Date().toISOString()
       };
-      console.log('OK', domain, recordDate, '->', visitors, 'visitors,', hits, 'hits');
+
+      const daysCount = Object.keys(data[domain]).length;
+      console.log('OK', domain, '→', visitors, 'visitors,', hits, 'hits', '| дней в базе:', daysCount);
     } catch (e) {
       console.error('Ошибка', domain, e.message);
+      // не трогаем уже сохранённые дни при ошибке одного домена
     }
   }
 
+  // Сортировка дат внутри каждого домена (старые ключи сохраняются)
   for (const d of Object.keys(data)) {
+    if (typeof data[d] !== 'object') continue;
     const sorted = {};
     Object.keys(data[d]).sort().forEach(k => { sorted[k] = data[d][k]; });
     data[d] = sorted;
   }
 
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
-  console.log('Готово. Дата записи (Москва, вчера):', recordDate);
+  console.log('=== Готово ===');
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().catch(e => {
+  console.error(e);
+  process.exit(1);
+});
