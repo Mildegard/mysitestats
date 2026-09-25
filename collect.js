@@ -29,6 +29,12 @@ function parseValues(text) {
   return result;
 }
 
+/** Дата YYYY-MM-DD по Москве */
+function moscowDate(offsetDays) {
+  const d = new Date(Date.now() + offsetDays * 86400000);
+  return d.toLocaleDateString('en-CA', { timeZone: 'Europe/Moscow' });
+}
+
 async function main() {
   console.log('Сбор:', DOMAINS.join(', '));
 
@@ -37,44 +43,47 @@ async function main() {
     try { data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) {}
   }
 
-  // Старый формат (даты на верхнем уровне) → переносим в spacefantasy.ru
+  // Старый плоский формат → spacefantasy.ru
   const keys = Object.keys(data);
   if (keys.length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(keys[0])) {
     console.log('Конвертация старого формата...');
     data = { 'spacefantasy.ru': data };
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Берём ЗАКРЫТЫЙ день (LI_day_*) — полный вчерашний день
+  // Дата записи = вчера по Москве
+  const recordDate = moscowDate(-1);
 
   for (const domain of DOMAINS) {
     if (!data[domain]) data[domain] = {};
     try {
       const raw = await fetchValues(domain);
       const v = parseValues(raw);
-      const visitors = v.today_vis ?? v.day_vis ?? 0;
-      const hits = v.today_hit ?? v.day_hit ?? 0;
 
-      data[domain][today] = {
-        date: today,
+      // day_* = полный вчерашний день (надёжно)
+      const visitors = (v.day_vis > 0 ? v.day_vis : (v.today_vis || 0));
+      const hits     = (v.day_hit > 0 ? v.day_hit : (v.today_hit || 0));
+
+      data[domain][recordDate] = {
+        date: recordDate,
         visitors,
         hits,
         updated: new Date().toISOString()
       };
-      console.log('OK', domain, visitors, 'visitors,', hits, 'hits');
+      console.log('OK', domain, recordDate, '->', visitors, 'visitors,', hits, 'hits');
     } catch (e) {
       console.error('Ошибка', domain, e.message);
     }
   }
 
-  // Сортировка
   for (const d of Object.keys(data)) {
     const sorted = {};
-    Object.keys(data[d]).sort().forEach(k => sorted[k] = data[d][k]);
+    Object.keys(data[d]).sort().forEach(k => { sorted[k] = data[d][k]; });
     data[d] = sorted;
   }
 
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
-  console.log('Готово');
+  console.log('Готово. Дата записи (Москва, вчера):', recordDate);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
